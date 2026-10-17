@@ -80,6 +80,10 @@ if args.benchmark is not None:
     print(f'Override benchmark steps for TPUT benchmark: {args.benchmark}')
     print('-' * 50)
 
+# ==============================================================================
+# Training Setup
+# ==============================================================================
+
 # Define batch size and context length
 B = trainer_config.batch_size
 T = llm_config.ctx_len
