@@ -12,9 +12,10 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from typing import Tuple
+from .distributed import prepare
+from .estimate_memory import parameter_bytes, gradient_bytes, optimizer_bytes, activation_bytes, device_memory
 from src.model.llm_config import LLMConfig
 from src.model.llm import LLM
-
 
 
 class TokenBatchLoader:
@@ -54,7 +55,6 @@ class TokenBatchLoader:
             self.curr_idx=0
 
         return x, y
-
 
 
 @dataclass
@@ -100,8 +100,20 @@ class LLMTrainerConfig:
 
     # Early stopping
     # early_stopping_patience: int | None = None
-    
 
+    # ================================================
+    # Parallelism strategies to use.
+    # The process count comes from torchrun, not from this field.
+    # ================================================
+    # none: No parallelism 
+    # ddp : Data Parallelism
+    # fsdp: Fully Sharded Data Parallelism
+    # tp  : Tensor Parallelism
+    # pp  : Pipeline Parallelism
+    # ep  : Expert Parallelism
+    parallelism: str = "none"
+
+    
 class LLMTrainer:
     def __init__(
         self, 
@@ -114,13 +126,36 @@ class LLMTrainer:
         self.config=config
         # Detect device 
         self.device = self._resolve_device()
-        # Move model to device
-        self.model = model.to(self.device)
+        # Move model to device and wrap with parallelism strategies
+        self.model = prepare(model=model, config=self.config, device=self.device)
         # Define object to load batches of tokens of shape (B, T)
         self.train_loader=train_loader
         self.val_loader=val_loader
         # Define Optimizer
         self.optimizer = self._configure_optimizer()
+        # Estimate memory
+        print('-'*50)
+        print("Memory Estimate:")
+        param_b = parameter_bytes(self.model)
+        grad_b = gradient_bytes(self.model)
+        opt_b = optimizer_bytes(self.optimizer)
+        act_b = activation_bytes(
+            self.model.config,
+            self.config.batch_size,
+            bytes_per_element=next(self.model.parameters()).element_size()
+        )
+        print(
+            f"memory estimate: params {param_b/1e6:,} MB, "
+            f"grads {grad_b/1e6:,} MB, "
+            f"optimizer {opt_b/1e6:,} MB, "
+            f"total {(param_b + grad_b + opt_b)/1e6:,} MB"
+        )
+        print(
+            f"activation estimate: logits {act_b['logits_bytes']/1e6:,} MB, "
+            f"blocks {act_b['block_bytes']/1e6:,} MB, "
+            f"total {act_b['total_bytes']/1e6:,} MB"
+        )
+        print('-'*50)
         # Track current step of update
         self.step=0
         # Track best val loss
@@ -293,6 +328,10 @@ class LLMTrainer:
             # Start time
             step_start = time.perf_counter()
 
+            # Reset peak memory stats for CUDA
+            if self.step == 0 and self.device.type == "cuda":
+                torch.cuda.reset_peak_memory_stats(self.device)
+
             # Perfom 1 unit of train step
             train_loss, grad_norm = self.train_step()
             self.train_loss_hist.append(train_loss)
@@ -308,6 +347,29 @@ class LLMTrainer:
 
             step_total_time = (step_end-step_start)
             train_throughput = (self.config.batch_size*self.model.config.ctx_len)/step_total_time
+
+            # Measure device memory and optimizer memory after step 0
+            def _mb(n) -> str:
+                if n is None:
+                    return "unavailable"
+                return f"{n/1e6:,} MB"
+
+            if self.step == 0:
+                measured = device_memory(self.device)
+                opt_after = optimizer_bytes(self.optimizer)
+                print('Device Memory:')
+                if measured is None:
+                    print(f"device memory: unavailable on {self.device.type}")
+                else:
+                    print(
+                        "device memory: "
+                        f"allocated {_mb(measured['allocated'])}, "
+                        f"reserved {_mb(measured['reserved'])}, "
+                        f"peak_allocated {_mb(measured['peak_allocated'])}, "
+                        f"peak_reserved {_mb(measured['peak_reserved'])}"
+                    )
+                print(f"optimizer after step 0: {opt_after/1e6:,} MB")
+                print('-'*50)
 
 
             # Logging: Log Train Stats @ eval_interval or @ log_iterval
@@ -547,6 +609,7 @@ if __name__=='__main__':
         val_loader=tok_bl_val
     )
 
+    breakpoint()
 
     # ======== Start Training ========
     print('Starting Training...')
