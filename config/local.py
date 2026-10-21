@@ -6,6 +6,7 @@ from src.training.trainer import LLMTrainerConfig
 # Short run for reading the training loop on CPU.
 SEED = 42
 B = 8
+GRAD_ACCUM_STEPS = 1
 STEPS = 20
 DEVICE = "cpu"
 
@@ -19,6 +20,7 @@ llm_config = LLMConfig(
     dropout=0.0,
     eps=1e-5,
     bias=False,
+    use_checkpoint=False,
     n_heads=4,
     n_groups=2,
     use_flash=True,
@@ -29,14 +31,20 @@ llm_config = LLMConfig(
 trainer_config = LLMTrainerConfig(
     num_steps=STEPS,
     batch_size=B,
+    grad_accum_steps=GRAD_ACCUM_STEPS,
     learning_rate=6e-4,
     weight_decay=0.01,
+    fused_optimizer=False,
+    optimizer_name="adamw",
+    momentum=0.9,
     beta1=0.9,
     beta2=0.95,
     use_lr_scheduler=True,
     warmup_steps=5,
     min_lr=0.1 * 6e-4,
     grad_clip=1.0,
+    precision="fp32",
+    compile_model=True,
     log_interval=1,
     moe_log_interval=100,
     eval_interval=5,
