@@ -11,7 +11,8 @@ def profile_train_step(
     warmup: int=2,
     active: int=4,
     repeats: int=5,
-)-> tuple[profile, str]:
+    save_trace: bool=False,
+)-> tuple[profile, None | str]:
     """
     Profile training steps of the model.
     """
@@ -29,7 +30,7 @@ def profile_train_step(
     prof = profile(
         activities=activities,
         schedule=schedule(wait=wait, warmup=warmup, active=active),
-        on_trace_ready=tensorboard_trace_handler(str(trace_dir)),
+        on_trace_ready = tensorboard_trace_handler(str(trace_dir)) if save_trace else None,
         record_shapes=True,
         profile_memory=True,
         with_flops=True,
@@ -46,6 +47,10 @@ def profile_train_step(
             trainer.train_step()
             # Step the profiler
             prof.step()
+
+    # If not saving the trace, return the profiler and None
+    if not save_trace:
+        return prof, None
 
     # Get hold of the trace file
     traces = sorted(trace_dir.glob("*.pt.trace.json"))

@@ -4,40 +4,64 @@ import sys
 from datetime import datetime
 from pathlib import Path
 import importlib
-
+import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+def resolve_device(device:str) -> tuple[int, int]:
+    if device == "auto":
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+
+    if device == "cuda":
+        WARMUP, BENCHMARK = 50, 50
+    else:
+        WARMUP, BENCHMARK = 5, 50
+
+    return WARMUP, BENCHMARK
+
 
 
 # ========================================================
 # Global settings
 # ========================================================
+
+# --------------------------------
+# Part1: Config Settings
+# --------------------------------
 ROOT = Path(__file__).resolve().parents[1]
 # CONFIG = "config.local"
 CONFIG = "config.dense_default"
+_cfg = importlib.import_module(CONFIG)
 
-# ========================================================
-# Global Setting: Profiling
-# ========================================================
-PROFILE_WAIT = 25
-PROFILE_WARMUP = 25
-PROFILE_ACTIVE = 25
-PROFILE_REPEAT = 1
+# --------------------------------
+# Part2: Benchmark Settings
+# --------------------------------
+TO_BENCHMARK = True
+WARMUP, BENCHMARK = resolve_device(_cfg.DEVICE)
+B_SWEEP = [_cfg.trainer_config.batch_size * m for m in (1, 2, 4)]
+T_SWEEP = [_cfg.llm_config.ctx_len * m for m in (1, 2, 4)]
+GRAD_ACCUM = 4
+
+# --------------------------------
+# Part3: Profiling Settings
+# --------------------------------
+TO_PROFILE = False
+PROFILE_TRACES = False # True: trace and operators.txt. False: memory.html.
+if PROFILE_TRACES:
+    PROFILE_WAIT, PROFILE_WARMUP, PROFILE_ACTIVE, PROFILE_REPEAT = 25, 25, 25, 1
+else:
+    PROFILE_WAIT, PROFILE_WARMUP, PROFILE_ACTIVE, PROFILE_REPEAT = 0, 0, 4, 1
+
 
 # # ========================================================
 # # Settings: CPU Baseline
 # # ========================================================
-# _cfg = importlib.import_module(CONFIG)
-# GRAD_ACCUM = 4
-# B_SWEEP = [_cfg.trainer_config.batch_size * m for m in (1, 2, 4)]
-# T_SWEEP = [_cfg.llm_config.ctx_len * m for m in (1, 2, 4)]
-# if _cfg.DEVICE == "cpu":
-#     WARMUP = 5
-#     BENCHMARK = 50
-# elif _cfg.DEVICE == "auto":
-#     WARMUP = 50
-#     BENCHMARK = 50
 # CPU = {
 #     "ctx_len": _cfg.llm_config.ctx_len,
 #     "use_flash": True,
@@ -79,15 +103,6 @@ PROFILE_REPEAT = 1
 # Settings: GPU Baseline
 # ========================================================
 _cfg = importlib.import_module(CONFIG)
-B_SWEEP = [_cfg.trainer_config.batch_size * m for m in (1, 2, 4)]
-T_SWEEP = [_cfg.llm_config.ctx_len * m for m in (1, 2, 4)]
-if _cfg.DEVICE == "cpu":
-    WARMUP = 5
-    BENCHMARK = 50
-elif _cfg.DEVICE == "auto":
-    WARMUP = 50
-    BENCHMARK = 50
-GRAD_ACCUM = 4
 GPU = {
     "ctx_len": _cfg.llm_config.ctx_len,
     "use_flash": False,
@@ -143,26 +158,26 @@ RUNS = [
     },
 
     # Sweeps: Batch Size & Context length
-    # {"name": "baseline_B", **GPU, "sweep": "B"},
-    # {"name": "baseline_T", **GPU, "sweep": "T"},
-    # {
-    #     "name": "flash+compile+fused+bf16_B",
-    #     **GPU,
-    #     "use_flash": True,
-    #     "compile_model": True,
-    #     "fused_optimizer": True,
-    #     "precision": "bf16",
-    #     "sweep": "B",
-    # },
-    # {
-    #     "name": "flash+compile+fused+bf16_T",
-    #     **GPU,
-    #     "use_flash": True,
-    #     "compile_model": True,
-    #     "fused_optimizer": True,
-    #     "precision": "bf16",
-    #     "sweep": "T",
-    # },
+    {"name": "baseline_B", **GPU, "sweep": "B"},
+    {"name": "baseline_T", **GPU, "sweep": "T"},
+    {
+        "name": "flash+compile+fused+bf16_B",
+        **GPU,
+        "use_flash": True,
+        "compile_model": True,
+        "fused_optimizer": True,
+        "precision": "bf16",
+        "sweep": "B",
+    },
+    {
+        "name": "flash+compile+fused+bf16_T",
+        **GPU,
+        "use_flash": True,
+        "compile_model": True,
+        "fused_optimizer": True,
+        "precision": "bf16",
+        "sweep": "T",
+    },
 
 ]
 
@@ -170,12 +185,12 @@ RUNS = [
 # CUDA memory plots. 
 #   Memory timelines for checkpointing, accumulation, and precision.
 # ========================================================
-# PROFILE = [
-#     "checkpoint",
-#     "grad_accum",
-#     "bf16",
-#     "flash+compile+fused+bf16",
-# ]
+PROFILE = [
+    "checkpoint",
+    "grad_accum",
+    "bf16",
+    "flash+compile+fused+bf16",
+]
 
 
 
@@ -214,79 +229,81 @@ def main():
     rates = []
 
     # Benchmark Runs
-    rows = []
-    for run in RUNS:
-        for label, b, t in points(run):
-            print(label)
-            subprocess.run(command(run, b, t, csv_path), check=True, cwd=ROOT)
-            with csv_path.open(newline="") as f:
-                rate = float(list(csv.DictReader(f))[-1]["tokens_per_sec"])
-            rows.append({
-                "name": run["name"],
-                "sweep": run.get("sweep"),
-                "b": b,
-                "t": t,
-                "label": label,
-                "rate": rate,
-            })
+    if TO_BENCHMARK:
+        rows = []
+        for run in RUNS:
+            for label, b, t in points(run):
+                print(label)
+                subprocess.run(command(run, b, t, csv_path), check=True, cwd=ROOT)
+                with csv_path.open(newline="") as f:
+                    rate = float(list(csv.DictReader(f))[-1]["tokens_per_sec"])
+                rows.append({
+                    "name": run["name"],
+                    "sweep": run.get("sweep"),
+                    "b": b,
+                    "t": t,
+                    "label": label,
+                    "rate": rate,
+                })
 
-    # Plot - Point Runs
-    bars = [r for r in rows if r["sweep"] is None]
-    if bars:
-        fig, ax = plt.subplots(figsize=(12, 4))
-        ax.bar([r["label"] for r in bars], [r["rate"] for r in bars])
-        ax.set_ylabel("tokens/sec")
-        ax.tick_params(axis="x", rotation=30)
-        fig.tight_layout()
-        plot_path = csv_path.parent / "tokens_per_sec.png"
-        fig.savefig(plot_path)
-        print(plot_path)
+        # Plot - Point Runs
+        bars = [r for r in rows if r["sweep"] is None]
+        if bars:
+            fig, ax = plt.subplots(figsize=(12, 4))
+            ax.bar([r["label"] for r in bars], [r["rate"] for r in bars])
+            ax.set_ylabel("tokens/sec")
+            ax.tick_params(axis="x", rotation=30)
+            fig.tight_layout()
+            plot_path = csv_path.parent / "tokens_per_sec.png"
+            fig.savefig(plot_path)
+            print(plot_path)
 
 
-    def save_lines(sweep, xkey, xlabel, filename):
-        chosen = [r for r in rows if r["sweep"] == sweep]
-        if not chosen:
-            return
-        names = []
-        for r in chosen:
-            if r["name"] not in names:
-                names.append(r["name"])
-        fig, ax = plt.subplots(figsize=(12, 4))
-        for name in names:
-            pts = [r for r in chosen if r["name"] == name]
-            ax.plot([r[xkey] for r in pts], [r["rate"] for r in pts], marker="o", label=name)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel("tokens/sec")
-        ax.legend()
-        fig.tight_layout()
-        path = csv_path.parent / filename
-        fig.savefig(path)
-        print(path)
+        def save_lines(sweep, xkey, xlabel, filename):
+            chosen = [r for r in rows if r["sweep"] == sweep]
+            if not chosen:
+                return
+            names = []
+            for r in chosen:
+                if r["name"] not in names:
+                    names.append(r["name"])
+            fig, ax = plt.subplots(figsize=(12, 4))
+            for name in names:
+                pts = [r for r in chosen if r["name"] == name]
+                ax.plot([r[xkey] for r in pts], [r["rate"] for r in pts], marker="o", label=name)
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("tokens/sec")
+            ax.legend()
+            fig.tight_layout()
+            path = csv_path.parent / filename
+            fig.savefig(path)
+            print(path)
 
-    # Plot - Sweep Runs
-    save_lines("B", "b", "batch size", "tokens_per_sec_B.png")
-    save_lines("T", "t", "context length", "tokens_per_sec_T.png")
+        # Plot - Sweep Runs
+        save_lines("B", "b", "batch size", "tokens_per_sec_B.png")
+        save_lines("T", "t", "context length", "tokens_per_sec_T.png")
 
 
     # Profiling Runs
-    profile_names = globals().get("PROFILE") or []
-    if profile_names:
-        by_name = {run["name"]: run for run in RUNS}
-        for name in profile_names:
-            run = by_name[name]
-            for label, b, t in points(run):
-                profile_dir = csv_path.parent / "profile" / label.replace(" ", "_")
-                cmd = command(run, b, t, csv_path)
-                cmd += [
-                    "--profile",
-                    "--profile_dir", str(profile_dir),
-                    "--profile_wait", str(PROFILE_WAIT),
-                    "--profile_warmup", str(PROFILE_WARMUP),
-                    "--profile_active", str(PROFILE_ACTIVE),
-                    "--profile_repeat", str(PROFILE_REPEAT),
-                ]
-                print("profile", label)
-                subprocess.run(cmd, check=True, cwd=ROOT)
+    if TO_PROFILE:
+        if len(PROFILE) > 0:
+            by_name = {run["name"]: run for run in RUNS}
+            for name in PROFILE:
+                run = by_name[name]
+                for label, b, t in points(run):
+                    profile_dir = csv_path.parent / "profile" / label.replace(" ", "_")
+                    cmd = command(run, b, t, csv_path)
+                    cmd += [
+                        "--profile",
+                        "--profile_dir", str(profile_dir),
+                        "--profile_wait", str(PROFILE_WAIT),
+                        "--profile_warmup", str(PROFILE_WARMUP),
+                        "--profile_active", str(PROFILE_ACTIVE),
+                        "--profile_repeat", str(PROFILE_REPEAT),
+                        "--profile_traces", str(PROFILE_TRACES).lower(),
+                    ]
+                    print("profile", label)
+                    subprocess.run(cmd, check=True, cwd=ROOT)
 
 
 if __name__ == "__main__":

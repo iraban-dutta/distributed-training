@@ -192,6 +192,13 @@ parser.add_argument(
     default=None,
     help='Override repeats for profile'
 )
+# Profile Traces Config
+parser.add_argument(
+    "--profile_traces",
+    type=str2bool,
+    default=False,
+    help="True: trace and operators.txt. False: memory.html",
+)
 
 # ================================================
 # Parse Arguments
@@ -325,7 +332,7 @@ if args.profile:
         repeats = args.profile_repeat
 
     # Call the profiler
-    prof, trace_path = profile_train_step(trainer, run_dir, wait, warmup, active, repeats)
+    prof, trace_path = profile_train_step(trainer, run_dir, wait, warmup, active, repeats, args.profile_traces)
     
     # Print the top 15 operators by time
     sort_by = "self_cuda_time_total" if trainer.device.type == "cuda" else "self_cpu_time_total"
@@ -335,19 +342,20 @@ if args.profile:
     # Save the table to a file
     Path(run_dir, "operators.txt").write_text(table + "\n")
 
-    # Print the trace file: Navigate to perfetto.dev to view the trace
-    print(f"Trace file: {trace_path}")
-    print('-' * 50)
-
-    # Dump the memory timeline
-    if trainer.device.type == "cuda":
-        index = trainer.device.index
-        if index is None:
-            index = torch.cuda.current_device()
-        memory_device = f"cuda:{index}"
-        memory_path = Path(run_dir, "memory.html")
-        prof.export_memory_timeline(str(memory_path), device=memory_device)
-        print(f"Memory plot: {memory_path} ({memory_device})")
+    if args.profile_traces:
+        # Print the trace file: Navigate to perfetto.dev to view the trace
+        print(f"Trace file: {trace_path}")
+        print('-' * 50)
+    else:
+        # Dump the memory timeline
+        if trainer.device.type == "cuda":
+            index = trainer.device.index
+            if index is None:
+                index = torch.cuda.current_device()
+            memory_device = f"cuda:{index}"
+            memory_path = Path(run_dir, "memory.html")
+            prof.export_memory_timeline(str(memory_path), device=memory_device)
+            print(f"Memory plot: {memory_path} ({memory_device})")
 
     print('Finished Profile')
 
