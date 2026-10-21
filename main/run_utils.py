@@ -7,6 +7,8 @@ from src.training.trainer import LLMTrainerConfig, TokenBatchLoader
 
 def make_loaders(trainer_config: LLMTrainerConfig, llm_config: LLMConfig):
     B = trainer_config.batch_size
+    # Done to ensure consistency with gradient accumulation
+    B_val_test = trainer_config.batch_size * trainer_config.grad_accum_steps
     T = llm_config.ctx_len
 
     print(f'Create generator for loading train data of shape ({B}, {T})')
@@ -19,8 +21,8 @@ def make_loaders(trainer_config: LLMTrainerConfig, llm_config: LLMConfig):
     )
 
     print(f'Create generator for loading validation data of shape ({B}, {T})')
-    _ = len(np.memmap(filename=VAL_BIN, dtype=TOKEN_DTYPE, mode='r'))
     tok_bl_val = TokenBatchLoader(
+        # B=B_val_test,
         B=B,
         T=T,
         binary_file_path=VAL_BIN,
