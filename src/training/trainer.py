@@ -10,8 +10,9 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.optim import AdamW
+from torch.optim import AdamW, SGD
 from typing import Tuple
+import torch.profiler
 from .distributed import prepare
 from .estimate_memory import parameter_bytes, gradient_bytes, optimizer_bytes, activation_bytes, device_memory
 from src.model.llm_config import LLMConfig
@@ -64,11 +65,21 @@ class LLMTrainerConfig:
     num_steps:int=50
 
     # Batch
-    batch_size:int=32
+    batch_size:int=8
+    grad_accum_steps:int=1
 
+    # ================================================
     # Optimizer
+    # ================================================
+    # Generic Optimizer hyperparameters
     learning_rate:float = 3e-4
     weight_decay: float = 0.01
+    fused_optimizer: bool = False
+    # Optimizer Name
+    optimizer_name: str = "adamw"
+    # SGD+Momentum Optimizer hyperparameters
+    momentum: float = 0.9
+    # AdamW Optimizer hyperparameters
     beta1: float = 0.9
     beta2: float = 0.95
 
@@ -79,6 +90,12 @@ class LLMTrainerConfig:
 
     # Gradient clipping
     grad_clip: float = 1.0
+
+    # Train Precision
+    precision: str = "fp32"
+
+    # Compile Model (torch.compile)
+    compile_model: bool = False
 
     # Logging
     curr_datetime = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
@@ -128,6 +145,12 @@ class LLMTrainer:
         self.device = self._resolve_device()
         # Move model to device and wrap with parallelism strategies
         self.model = prepare(model=model, config=self.config, device=self.device)
+        print('-'*50)
+        # Compile model if enabled
+        if self.config.compile_model:
+            self.model = torch.compile(self.model)
+            print("torch.compile enabled")
+            print('-'*50)
         # Define object to load batches of tokens of shape (B, T)
         self.train_loader=train_loader
         self.val_loader=val_loader
@@ -155,6 +178,10 @@ class LLMTrainer:
             f"blocks {act_b['block_bytes']/1e6:,} MB, "
             f"total {act_b['total_bytes']/1e6:,} MB"
         )
+        print('-'*50)
+        # Configure precision
+        self.precision = self._configure_precision()
+        print(f"Using precision: {self.precision}")
         print('-'*50)
         # Track current step of update
         self.step=0
@@ -203,16 +230,62 @@ class LLMTrainer:
         ]
 
         # Define optimizer
-        # use 'fused' if device is cuda: Supports a fused kernel for all parameter updates
-        use_fused = self.device.type == "cuda"
-        optimizer = AdamW(
-            per_param_groups, 
-            lr=self.config.learning_rate,
-            betas=(self.config.beta1, self.config.beta2),
-            fused=use_fused
-        )
+        if self.config.fused_optimizer and self.device.type != "cuda":
+            raise RuntimeError("fused_optimizer=True needs a CUDA device")
+        fused = self.config.fused_optimizer
+        name = self.config.optimizer_name
+
+        if name == "adamw":
+            optimizer = AdamW(
+                per_param_groups,
+                lr=self.config.learning_rate,
+                betas=(self.config.beta1, self.config.beta2),
+                fused=fused,
+            )
+        elif name == "sgd":
+            if self.config.momentum <= 0:
+                raise RuntimeError("optimizer_name='sgd' requires momentum > 0")
+            optimizer = SGD(
+                per_param_groups,
+                lr=self.config.learning_rate,
+                momentum=self.config.momentum,
+                fused=fused,
+            )
+        else:
+            raise RuntimeError(f"optimizer_name must be adamw or sgd, got {name}")
+        print(f"optimizer: {name}, fused: {fused}")
 
         return optimizer
+
+
+    def _configure_precision(self) -> str:
+        precision = self.config.precision
+        if precision not in ("fp32", "tf32", "bf16"):
+            raise RuntimeError(f"precision must be fp32, tf32, or bf16, got {precision}")
+
+        torch.set_float32_matmul_precision("highest")
+        if precision == "fp32":
+            return precision
+
+        if self.device.type != "cuda":
+            raise RuntimeError(f"precision='{precision}' needs a CUDA GPU")
+
+        index = self.device.index
+        if index is None:
+            index = torch.cuda.current_device()
+        major, minor = torch.cuda.get_device_capability(index)
+
+        if precision == "tf32":
+            if major < 8:
+                raise RuntimeError(f"TF32 needs compute capability >= 8, got {major}.{minor}")
+            torch.set_float32_matmul_precision("high")
+            return precision
+
+        with torch.cuda.device(index):
+            bf16_ok = torch.cuda.is_bf16_supported(including_emulation=False)
+        if not bf16_ok:
+            raise RuntimeError(f"BF16 is not supported on cuda:{index}")
+        return precision
 
 
     def evaluate_model(self) -> float:
@@ -231,7 +304,14 @@ class LLMTrainer:
                 # Load Data (x,y) and move tensors to device
                 x_val, y_val = self.val_loader.next_batch()
                 x_val, y_val = x_val.to(self.device), y_val.to(self.device)
-                _, loss = self.model(x_val, y_val)
+
+                with torch.autocast(
+                    device_type=self.device.type,
+                    dtype=torch.bfloat16,
+                    enabled=self.precision == "bf16", # enabled=True if precision is bf16
+                ):
+                    _, loss = self.model(x_val, y_val)
+                    
                 val_loss += loss.item()
                 cnt += 1
 
@@ -261,47 +341,63 @@ class LLMTrainer:
 
     def train_step(self):
 
-            # Load Data (x,y) and move tensors to device
-            x, y = self.train_loader.next_batch()
-            x, y = x.to(self.device), y.to(self.device)
-
             # Zero out gradients
             self.optimizer.zero_grad()
             
-            # Forward pass
-            logits, loss = self.model(x, y)
+            # Gradient Accumulation
+            loss_sum = 0.0
+            for _ in range(self.config.grad_accum_steps):
 
-            # Backward Pass
-            loss.backward()
+                # Load Data (x,y) and move tensors to device
+                with torch.profiler.record_function("load_data"):
+                    x, y = self.train_loader.next_batch()
+                    x, y = x.to(self.device), y.to(self.device)
 
-            # Clip gardient norm
-            # Computes the global norm across all parameter grads
-            # if ||g|| > max_norm, each grad is scaled: g_i = g_i * max_norm / ||g|| 
-            # The function returns the PRE-clipping global norm.
-            global_grad_norm = torch.nn.utils.clip_grad_norm_(parameters=self.model.parameters(), max_norm=self.config.grad_clip, norm_type=2)
+                # Forward pass
+                with torch.profiler.record_function("forward_pass"):
+                    with torch.autocast(
+                        device_type=self.device.type,
+                        dtype=torch.bfloat16,
+                        enabled=self.precision == "bf16", # enabled=True if precision is bf16
+                    ):
+                        logits, loss = self.model(x, y)
 
-            # DEBUG: Grad norm without clipping
-            # global_grad_norm = sum(torch.linalg.norm(p)**2 for p in self.model.parameters())**0.5
+                # Sum the loss over micro-batch
+                loss_sum += loss.item()
 
-            # Added checks to raise RuntimeError or a warning for unsually large grad_norms
-            if not torch.isfinite(global_grad_norm):
-                raise RuntimeError(
-                    f"Non-finite gradient norm at step {self.step}: "
-                    f"{global_grad_norm.item()}"
-                )
-
-            if global_grad_norm > 100:
-                print(
-                    f"WARNING: unusually large gradient norm "
-                    f"{global_grad_norm.item():.2f} at step {self.step}"
-                )
-
-            # Optimizer Step
-            self.optimizer.step()
+                # Backward Pass
+                with torch.profiler.record_function("backward_pass"):
+                    # Adjust the loss for gradient accumulation
+                    (loss / self.config.grad_accum_steps).backward()
 
 
+            with torch.profiler.record_function("optimizer"):
+                # Clip gardient norm
+                # Computes the global norm across all parameter grads
+                # if ||g|| > max_norm, each grad is scaled: g_i = g_i * max_norm / ||g|| 
+                # The function returns the PRE-clipping global norm.
+                global_grad_norm = torch.nn.utils.clip_grad_norm_(parameters=self.model.parameters(), max_norm=self.config.grad_clip, norm_type=2)
 
-            return loss.item(), global_grad_norm.item()
+                # DEBUG: Grad norm without clipping
+                # global_grad_norm = sum(torch.linalg.norm(p)**2 for p in self.model.parameters())**0.5
+
+                # Added checks to raise RuntimeError or a warning for unsually large grad_norms
+                if not torch.isfinite(global_grad_norm):
+                    raise RuntimeError(
+                        f"Non-finite gradient norm at step {self.step}: "
+                        f"{global_grad_norm.item()}"
+                    )
+
+                if global_grad_norm > 100:
+                    print(
+                        f"WARNING: unusually large gradient norm "
+                        f"{global_grad_norm.item():.2f} at step {self.step}"
+                    )
+
+                # Optimizer Step
+                self.optimizer.step()
+
+            return (loss_sum/self.config.grad_accum_steps), global_grad_norm.item()
 
 
     def train(self):
@@ -346,7 +442,9 @@ class LLMTrainer:
             step_end = time.perf_counter()
 
             step_total_time = (step_end-step_start)
-            train_throughput = (self.config.batch_size*self.model.config.ctx_len)/step_total_time
+            train_throughput = (
+                self.config.batch_size * self.config.grad_accum_steps * self.model.config.ctx_len
+            ) / step_total_time
 
             # Measure device memory and optimizer memory after step 0
             def _mb(n) -> str:
@@ -589,7 +687,6 @@ if __name__=='__main__':
 
     # ======== Instantiate Val Batch Loaders ========
     binary_file_path = './data/tinystories/processed/val.bin'
-    val_token_len = len(np.memmap(filename=binary_file_path, dtype=np.uint16, mode='r'))
     tok_bl_val = TokenBatchLoader(
         B=trainer_config.batch_size, 
         T=llm_config.ctx_len, 

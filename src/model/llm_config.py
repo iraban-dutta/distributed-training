@@ -17,6 +17,11 @@ class LLMConfig:
     bias: bool = True
 
     # ================================================================
+    # Activation Checkpointing
+    # ================================================================
+    use_checkpoint: bool = False
+
+    # ================================================================
     # Attention is always GQA. Positions are always RoPE.
     # Normalization is always LayerNorm.
     # ================================================================

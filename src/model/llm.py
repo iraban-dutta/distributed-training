@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from .llm_config import LLMConfig
 from .layers import Decoder
 from .normalization import LayerNorm
@@ -85,7 +86,10 @@ class LLM(nn.Module):
         # Forward Pass3: Sequence of Decoder Layers (Norm + Attention + Norm + MLP/MoE)
         for i, decoder in enumerate(self.transformer.dec):
             cache = cache_manager[i] if cache_manager is not None else None
-            x=decoder(x, cache)
+            if self.training and self.config.use_checkpoint:
+                x = checkpoint(decoder, x, cache, use_reentrant=False)
+            else:
+                x=decoder(x, cache)
 
 
         # Forward Pass4: Norm (Before LM Head)
