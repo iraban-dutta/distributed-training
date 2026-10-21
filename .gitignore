@@ -4,6 +4,9 @@ data/
 .DS_Store
 .vscode/
 notebooks/sample.*
+logs/
+runs/
+scripts.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
