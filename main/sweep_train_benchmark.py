@@ -52,7 +52,7 @@ GRAD_ACCUM = 4
 # Part3: Profiling Settings
 # --------------------------------
 TO_PROFILE = True
-PROFILE_TRACES = False # True: trace and operators.txt. False: memory.html.
+PROFILE_TRACES = True # True: trace and operators.txt. False: memory.html.
 if PROFILE_TRACES:
     PROFILE_WAIT, PROFILE_WARMUP, PROFILE_ACTIVE = 25, 25, 25
 else:
