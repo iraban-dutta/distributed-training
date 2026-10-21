@@ -8,7 +8,8 @@ SEED = 42
 B = 8
 GRAD_ACCUM_STEPS = 1
 STEPS = 20
-DEVICE = "cpu"
+# DEVICE = "cpu"
+DEVICE = "cuda"
 
 
 llm_config = LLMConfig(
