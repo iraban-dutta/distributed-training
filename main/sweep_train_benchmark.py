@@ -14,11 +14,8 @@ import matplotlib.pyplot as plt
 # Global settings
 # ========================================================
 ROOT = Path(__file__).resolve().parents[1]
-WARMUP = 5
-BENCHMARK = 50
 # CONFIG = "config.local"
 CONFIG = "config.dense_default"
-
 
 # ========================================================
 # Global Setting: Profiling
@@ -35,6 +32,12 @@ PROFILE_REPEAT = 1
 # GRAD_ACCUM = 4
 # B_SWEEP = [_cfg.trainer_config.batch_size * m for m in (1, 2, 4)]
 # T_SWEEP = [_cfg.llm_config.ctx_len * m for m in (1, 2, 4)]
+# if _cfg.DEVICE == "cpu":
+#     WARMUP = 5
+#     BENCHMARK = 50
+# elif _cfg.DEVICE == "auto":
+#     WARMUP = 50
+#     BENCHMARK = 50
 # CPU = {
 #     "ctx_len": _cfg.llm_config.ctx_len,
 #     "use_flash": True,
@@ -78,6 +81,12 @@ PROFILE_REPEAT = 1
 _cfg = importlib.import_module(CONFIG)
 B_SWEEP = [_cfg.trainer_config.batch_size * m for m in (1, 2, 4)]
 T_SWEEP = [_cfg.llm_config.ctx_len * m for m in (1, 2, 4)]
+if _cfg.DEVICE == "cpu":
+    WARMUP = 5
+    BENCHMARK = 50
+elif _cfg.DEVICE == "auto":
+    WARMUP = 50
+    BENCHMARK = 50
 GRAD_ACCUM = 4
 GPU = {
     "ctx_len": _cfg.llm_config.ctx_len,
