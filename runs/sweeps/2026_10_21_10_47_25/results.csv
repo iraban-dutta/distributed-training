@@ -1,0 +1,11 @@
+config,device,precision,compile_model,grad_accum_steps,use_checkpoint,optimizer_name,fused_optimizer,use_flash,batch_size,seq_len,warmup_steps,benchmark_steps,median_step_ms,mean_step_ms,tokens_per_sec,torch
+config.dense_default,cuda,fp32,False,1,False,adamw,False,False,8,128,5,50,57.636,57.872,17766.812,2.5.1+cu124
+config.dense_default,cuda,fp32,False,1,False,adamw,False,True,8,128,5,50,58.058,55.781,17637.508,2.5.1+cu124
+config.dense_default,cuda,fp32,False,1,True,adamw,False,False,8,128,5,50,74.08,74.871,13822.805,2.5.1+cu124
+config.dense_default,cuda,fp32,False,4,False,adamw,False,False,2,128,5,50,220.808,220.924,4637.513,2.5.1+cu124
+config.dense_default,cuda,bf16,False,1,False,adamw,False,False,8,128,5,50,61.575,60.32,16630.236,2.5.1+cu124
+config.dense_default,cuda,fp32,True,1,False,adamw,False,False,8,128,5,50,33.437,33.432,30624.759,2.5.1+cu124
+config.dense_default,cuda,fp32,False,1,False,adamw,True,False,8,128,5,50,58.311,56.957,17560.918,2.5.1+cu124
+config.dense_default,cuda,fp32,True,1,False,adamw,True,True,8,128,5,50,31.992,32.094,32007.7,2.5.1+cu124
+config.dense_default,cuda,bf16,True,1,False,adamw,True,True,8,128,5,50,30.545,28.846,33524.648,2.5.1+cu124
+config.dense_default,cuda,bf16,True,4,True,adamw,True,True,2,128,5,50,158.25,156.203,6470.76,2.5.1+cu124
