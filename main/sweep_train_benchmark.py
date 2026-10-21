@@ -16,7 +16,8 @@ import matplotlib.pyplot as plt
 ROOT = Path(__file__).resolve().parents[1]
 WARMUP = 5
 BENCHMARK = 50
-CONFIG = "config.local"
+# CONFIG = "config.local"
+CONFIG = "config.dense_default"
 
 
 # ========================================================
@@ -98,61 +99,61 @@ GPU = {
 # ========================================================
 
 RUNS = [
-    # {"name": "baseline", **GPU},
-    # {"name": "flash", **GPU, "use_flash": True},
-    # {"name": "checkpoint", **GPU, "use_checkpoint": True},
-    # {"name": "grad_accum", **GPU, "batch_size": (_cfg.trainer_config.batch_size//GRAD_ACCUM), "grad_accum": GRAD_ACCUM},
-    # {"name": "bf16", **GPU, "precision": "bf16"},
-    # {"name": "compile", **GPU, "compile_model": True},
-    # {"name": "fused", **GPU, "fused_optimizer": True},
-    # {
-    #     "name": "flash+compile+fused",
-    #     **GPU,
-    #     "use_flash": True,
-    #     "compile_model": True,
-    #     "fused_optimizer": True,
-    # },
-    # {
-    #     "name": "flash+compile+fused+bf16",
-    #     **GPU,
-    #     "use_flash": True,
-    #     "compile_model": True,
-    #     "fused_optimizer": True,
-    #     "precision": "bf16",
-    # },
-    # {
-    #     "name": "all",
-    #     **GPU,
-    #     "use_flash": True,
-    #     "compile_model": True,
-    #     "fused_optimizer": True,
-    #     "precision": "bf16",
-    #     "use_checkpoint": True,
-    #     "batch_size": (_cfg.trainer_config.batch_size//GRAD_ACCUM),
-    #     "grad_accum": GRAD_ACCUM,
-    # },
+    {"name": "baseline", **GPU},
+    {"name": "flash", **GPU, "use_flash": True},
+    {"name": "checkpoint", **GPU, "use_checkpoint": True},
+    {"name": "grad_accum", **GPU, "batch_size": (_cfg.trainer_config.batch_size//GRAD_ACCUM), "grad_accum": GRAD_ACCUM},
+    {"name": "bf16", **GPU, "precision": "bf16"},
+    {"name": "compile", **GPU, "compile_model": True},
+    {"name": "fused", **GPU, "fused_optimizer": True},
+    {
+        "name": "flash+compile+fused",
+        **GPU,
+        "use_flash": True,
+        "compile_model": True,
+        "fused_optimizer": True,
+    },
+    {
+        "name": "flash+compile+fused+bf16",
+        **GPU,
+        "use_flash": True,
+        "compile_model": True,
+        "fused_optimizer": True,
+        "precision": "bf16",
+    },
+    {
+        "name": "all",
+        **GPU,
+        "use_flash": True,
+        "compile_model": True,
+        "fused_optimizer": True,
+        "precision": "bf16",
+        "use_checkpoint": True,
+        "batch_size": (_cfg.trainer_config.batch_size//GRAD_ACCUM),
+        "grad_accum": GRAD_ACCUM,
+    },
 
     # Sweeps: Batch Size & Context length
-    {"name": "baseline_B", **GPU, "sweep": "B"},
-    {"name": "baseline_T", **GPU, "sweep": "T"},
-    {
-        "name": "flash+compile+fused+bf16_B",
-        **GPU,
-        "use_flash": True,
-        "compile_model": True,
-        "fused_optimizer": True,
-        "precision": "bf16",
-        "sweep": "B",
-    },
-    {
-        "name": "flash+compile+fused+bf16_T",
-        **GPU,
-        "use_flash": True,
-        "compile_model": True,
-        "fused_optimizer": True,
-        "precision": "bf16",
-        "sweep": "T",
-    },
+    # {"name": "baseline_B", **GPU, "sweep": "B"},
+    # {"name": "baseline_T", **GPU, "sweep": "T"},
+    # {
+    #     "name": "flash+compile+fused+bf16_B",
+    #     **GPU,
+    #     "use_flash": True,
+    #     "compile_model": True,
+    #     "fused_optimizer": True,
+    #     "precision": "bf16",
+    #     "sweep": "B",
+    # },
+    # {
+    #     "name": "flash+compile+fused+bf16_T",
+    #     **GPU,
+    #     "use_flash": True,
+    #     "compile_model": True,
+    #     "fused_optimizer": True,
+    #     "precision": "bf16",
+    #     "sweep": "T",
+    # },
 
 ]
 
