@@ -22,10 +22,10 @@ CONFIG = "config.local"
 # ========================================================
 # Global Setting: Profiling
 # ========================================================
-PROFILE_WAIT = 5
-PROFILE_WARMUP = 5
-PROFILE_ACTIVE = 20
-PROFILE_REPEAT = 2
+PROFILE_WAIT = 25
+PROFILE_WARMUP = 25
+PROFILE_ACTIVE = 25
+PROFILE_REPEAT = 1
 
 # # ========================================================
 # # Settings: CPU Baseline
