@@ -185,13 +185,6 @@ parser.add_argument(
     default=None,
     help='Override active time for profile'
 )
-# Profile Repeats Config
-parser.add_argument(
-    "--profile_repeat", 
-    type=int, 
-    default=None,
-    help='Override repeats for profile'
-)
 # Profile Traces Config
 parser.add_argument(
     "--profile_traces",
@@ -321,41 +314,37 @@ if args.profile:
     run_dir = str(Path(args.profile_dir) / stamp)
 
     # Override the settings if provided
-    wait, warmup, active, repeats = 5, 5, 40, 2
+    wait, warmup, active = 5, 5, 40
     if args.profile_wait is not None:
         wait = args.profile_wait
     if args.profile_warmup is not None:
         warmup = args.profile_warmup
     if args.profile_active is not None:
         active = args.profile_active
-    if args.profile_repeat is not None:
-        repeats = args.profile_repeat
 
     # Call the profiler
-    prof, trace_path = profile_train_step(trainer, run_dir, wait, warmup, active, repeats, args.profile_traces)
-    
-    # Print the top 15 operators by time
-    sort_by = "self_cuda_time_total" if trainer.device.type == "cuda" else "self_cpu_time_total"
-    table = prof.key_averages().table(sort_by=sort_by, row_limit=15)
-    print(table)
-    print('-' * 50)
-    # Save the table to a file
-    Path(run_dir, "operators.txt").write_text(table + "\n")
+    prof, trace_path = profile_train_step(trainer, run_dir, wait, warmup, active, args.profile_traces)
 
     if args.profile_traces:
+        # Print the top 15 operators by time
+        sort_by = "self_cuda_time_total" if trainer.device.type == "cuda" else "self_cpu_time_total"
+        table = prof.key_averages().table(sort_by=sort_by, row_limit=15)
+        print(table)
+        print('-' * 50)
+        # Save the table to a file
+        Path(run_dir, "operators.txt").write_text(table + "\n")
         # Print the trace file: Navigate to perfetto.dev to view the trace
         print(f"Trace file: {trace_path}")
         print('-' * 50)
-    else:
-        # Dump the memory timeline
-        if trainer.device.type == "cuda":
-            index = trainer.device.index
-            if index is None:
-                index = torch.cuda.current_device()
-            memory_device = f"cuda:{index}"
-            memory_path = Path(run_dir, "memory.html")
-            prof.export_memory_timeline(str(memory_path), device=memory_device)
-            print(f"Memory plot: {memory_path} ({memory_device})")
+    elif trainer.device.type == "cuda":
+        # Memory timeline for the recorded cycle. Operator stats are skipped.
+        index = trainer.device.index
+        if index is None:
+            index = torch.cuda.current_device()
+        memory_device = f"cuda:{index}"
+        memory_path = Path(run_dir, "memory.html")
+        prof.export_memory_timeline(str(memory_path), device=memory_device)
+        print(f"Memory plot: {memory_path} ({memory_device})")
 
     print('Finished Profile')
 

@@ -10,7 +10,6 @@ def profile_train_step(
     wait: int=2,
     warmup: int=2,
     active: int=4,
-    repeats: int=5,
     save_trace: bool=False,
 )-> tuple[profile, None | str]:
     """
@@ -26,10 +25,12 @@ def profile_train_step(
     trace_dir = Path(trace_dir)
     trace_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create the profiler
+    # Create the profiler.
+    # repeat=1 keeps this single cycle. The default of 0 opens another cycle
+    # on the last prof.step() and drops this one.
     prof = profile(
         activities=activities,
-        schedule=schedule(wait=wait, warmup=warmup, active=active),
+        schedule=schedule(wait=wait, warmup=warmup, active=active, repeat=1),
         on_trace_ready = tensorboard_trace_handler(str(trace_dir)) if save_trace else None,
         record_shapes=True,
         profile_memory=True,
@@ -37,8 +38,8 @@ def profile_train_step(
         with_stack=True,
     )
 
-    # Define the total number of steps to profile
-    total_steps = (wait + warmup + active) * repeats
+    # One cycle: wait, then warmup, then the active steps.
+    total_steps = wait + warmup + active
 
     # Run the profiler
     with prof:

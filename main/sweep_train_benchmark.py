@@ -42,7 +42,7 @@ _cfg = importlib.import_module(CONFIG)
 # --------------------------------
 # Part2: Benchmark Settings
 # --------------------------------
-TO_BENCHMARK = True
+TO_BENCHMARK = False
 WARMUP, BENCHMARK = resolve_device(_cfg.DEVICE)
 B_SWEEP = [_cfg.trainer_config.batch_size * m for m in (1, 2, 4)]
 T_SWEEP = [_cfg.llm_config.ctx_len * m for m in (1, 2, 4)]
@@ -51,12 +51,12 @@ GRAD_ACCUM = 4
 # --------------------------------
 # Part3: Profiling Settings
 # --------------------------------
-TO_PROFILE = False
+TO_PROFILE = True
 PROFILE_TRACES = False # True: trace and operators.txt. False: memory.html.
 if PROFILE_TRACES:
-    PROFILE_WAIT, PROFILE_WARMUP, PROFILE_ACTIVE, PROFILE_REPEAT = 25, 25, 25, 1
+    PROFILE_WAIT, PROFILE_WARMUP, PROFILE_ACTIVE = 25, 25, 25
 else:
-    PROFILE_WAIT, PROFILE_WARMUP, PROFILE_ACTIVE, PROFILE_REPEAT = 0, 0, 4, 1
+    PROFILE_WAIT, PROFILE_WARMUP, PROFILE_ACTIVE = 0, 0, 4
 
 
 # # ========================================================
@@ -186,10 +186,10 @@ RUNS = [
 #   Memory timelines for checkpointing, accumulation, and precision.
 # ========================================================
 PROFILE = [
+    "baseline",
     "checkpoint",
     "grad_accum",
     "bf16",
-    "flash+compile+fused+bf16",
 ]
 
 
@@ -299,7 +299,6 @@ def main():
                         "--profile_wait", str(PROFILE_WAIT),
                         "--profile_warmup", str(PROFILE_WARMUP),
                         "--profile_active", str(PROFILE_ACTIVE),
-                        "--profile_repeat", str(PROFILE_REPEAT),
                         "--profile_traces", str(PROFILE_TRACES).lower(),
                     ]
                     print("profile", label)
