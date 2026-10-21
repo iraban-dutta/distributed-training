@@ -5,7 +5,7 @@ data/
 .vscode/
 notebooks/sample.*
 logs/
-runs/
+runs/**/*.json
 scripts.txt
 
 # Byte-compiled / optimized / DLL files
